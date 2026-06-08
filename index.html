@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Beata's Balance Hub</title>
+<meta name="theme-color" content="#87A96B">
+<style>
+  :root{
+    --sage:#87A96B;
+    --sage-600:#6f8c56;
+    --sage-700:#5c7450;
+    --sage-100:#e8efe1;
+    --sage-50:#f3f6f0;
+    --cream:#f9f6f0;
+    --cream-2:#fffdf8;
+    --ink:#2b3225;
+    --ink-2:#5a6452;
+    --border:#e6e2d8;
+    --white:#fff;
+    --amber:#f59e0b;
+    --shadow:0 6px 20px rgba(43,50,37,.08);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;
+    background:var(--cream);
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    line-height:1.45;
+  }
+  .app{
+    max-width:560px;
+    margin:0 auto;
+    min-height:100dvh;
+    display:flex;
+    flex-direction:column;
+    background:var(--cream-2);
+    box-shadow:0 0 40px rgba(0,0,0,.04);
+  }
+  header{
+    background:linear-gradient(135deg,var(--sage) 0%, #9bb583 60%, #b5c99a 100%);
+    color:white;
+    padding:28px 20px 22px;
+    border-radius:0 0 28px 28px;
+    position:relative;
+    overflow:hidden;
+  }
+  header::after{
+    content:"";
+    position:absolute;right:-40px;top:-30px;width:180px;height:180px;
+    background:radial-gradient(circle, rgba(255,255,255,.18), transparent 60%);
+    border-radius:50%;
+  }
+  .greeting{font-size:15px;opacity:.95;margin:0 0 4px}
+  h1{margin:0;font-size:28px;letter-spacing:.2px;font-weight:800}
+  .today{margin:6px 0 0;font-size:14px;opacity:.9}
+  
+  .tabs{
+    display:flex;gap:8px;padding:12px;position:sticky;top:0;z-index:20;
+    background:rgba(249,246,240,.85);backdrop-filter:saturate(180%) blur(12px);
+    border-bottom:1px solid var(--border);
+  }
+  .tab-btn{
+    flex:1;min-height:48px;padding:10px 12px;border:1px solid var(--border);
+    background:var(--white);border-radius:14px;font-weight:650;font-size:15px;
+    color:var(--ink-2);display:flex;align-items:center;justify-content:center;gap:6px;
+    cursor:pointer;transition:.2s;box-shadow:0 1px 0 rgba(0,0,0,.02);
+  }
+  .tab-btn.active{background:var(--sage);color:white;border-color:var(--sage-600);box-shadow:var(--shadow)}
+  
+  main{flex:1;padding:16px 16px 24px}
+  section[hidden]{display:none !important}
+  
+  .card{
+    background:white;border:1px solid var(--border);border-radius:20px;
+    padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.03);margin-bottom:14px;
+  }
+  .card h3{margin:0 0 12px;font-size:17px;display:flex;align-items:center;gap:8px}
+  
+  .progress-wrap{margin-bottom:14px}
+  .progress-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:650}
+  .progress-bar{height:10px;background:var(--sage-50);border-radius:99px;overflow:hidden;border:1px solid var(--border)}
+  .progress-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--sage),#a4c18a);transition:width .4s ease}
+  
+  .routine-group{margin-bottom:10px}
+  .routine-item{
+    display:flex;align-items:center;gap:12px;padding:12px 10px;border-radius:12px;
+    cursor:pointer;transition:.15s;border:1px solid transparent;min-height:52px;
+  }
+  .routine-item:active{transform:scale(.99)}
+  .routine-item:hover{background:var(--sage-50)}
+  .routine-item input{
+    appearance:none;-webkit-appearance:none;width:26px;height:26px;border-radius:8px;
+    border:2px solid #c9d3be;display:grid;place-items:center;flex-shrink:0;background:white;cursor:pointer;
+    transition:.15s;
+  }
+  .routine-item input:checked{background:var(--sage);border-color:var(--sage-600)}
+  .routine-item input:checked::after{content:"✓";color:white;font-weight:800;font-size:16px}
+  .routine-item span{font-size:16px}
+  .routine-item.checked span{text-decoration:line-through;color:var(--ink-2)}
+  .routine-note{font-size:13px;color:var(--ink-2);margin:6px 2px 0}
+  
+  .chore-section .chore-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .badge{font-size:12px;background:var(--sage-100);color:var(--sage-700);padding:4px 8px;border-radius:99px;font-weight:600}
+  .task-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .task{
+    display:flex;align-items:center;gap:10px;padding:10px;background:var(--cream);border:1px solid var(--border);
+    border-radius:12px;min-height:52px;
+  }
+  .task input[type="checkbox"]{width:24px;height:24px;accent-color:var(--sage);cursor:pointer;flex-shrink:0}
+  .task span{flex:1;font-size:15.5px}
+  .task.done span{text-decoration:line-through;color:var(--ink-2)}
+  .task button{
+    border:none;background:transparent;color:#a38f7a;font-size:20px;width:36px;height:36px;border-radius:8px;
+    cursor:pointer;display:grid;place-items:center;flex-shrink:0
+  }
+  .task button:hover{background:rgba(0,0,0,.06)}
+  .add-row{display:flex;gap:8px;margin-top:10px}
+  .add-row input{
+    flex:1;height:48px;border:1px solid var(--border);border-radius:12px;padding:0 12px;font-size:15px;background:white
+  }
+  .add-row button{
+    height:48px;padding:0 14px;border:none;border-radius:12px;background:var(--sage);color:white;font-weight:700;
+    cursor:pointer;min-width:72px
+  }
+  
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .filter-btn{
+    padding:10px 14px;border:1px solid var(--border);background:white;border-radius:99px;font-size:14px;
+    font-weight:600;color:var(--ink-2);cursor:pointer;min-height:40px
+  }
+  .filter-btn.active{background:var(--ink);color:white;border-color:var(--ink)}
+  
+  .recipe-grid{display:grid;grid-template-columns:1fr;gap:12px}
+  @media(min-width:500px){.recipe-grid{grid-template-columns:1fr 1fr}}
+  .recipe{
+    background:white;border:1px solid var(--border);border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:10px;
+    box-shadow:0 2px 6px rgba(0,0,0,.03)
+  }
+  .recipe-top{display:flex;gap:10px;align-items:flex-start}
+  .recipe-emoji{font-size:28px;line-height:1}
+  .recipe h4{margin:0;font-size:17px}
+  .pill{font-size:11px;background:var(--sage-50);color:var(--sage-700);padding:3px 8px;border-radius:99px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+  .recipe details{border-top:1px dashed var(--border);padding-top:8px}
+  .recipe summary{cursor:pointer;font-weight:650;color:var(--sage-700);list-style:none;display:flex;align-items:center;justify-content:space-between}
+  .recipe summary::-webkit-details-marker{display:none}
+  .recipe ul,.recipe ol{margin:8px 0 0 18px;padding:0}
+  .recipe li{margin:4px 0;font-size:14.5px}
+  .helps{font-size:14px;background:var(--sage-50);padding:10px;border-radius:12px;border:1px solid #dfe7d6}
+  .helps strong{color:var(--sage-700)}
+  
+  .note-card{
+    background:linear-gradient(0deg,#fff9e8,#fff3cf);border:1px solid #f0d9a3;border-radius:16px;padding:12px 14px;
+    font-size:14px;margin-top:14px;color:#7a5e1e
+  }
+  
+  footer{
+    padding:18px 20px 28px;text-align:center;font-size:12.5px;color:var(--ink-2);background:transparent
+  }
+  
+  .empty{padding:18px;text-align:center;color:var(--ink-2);font-size:14px}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <p class="greeting" id="greeting">Hello, Beata</p>
+    <h1>Balance Hub</h1>
+    <p class="today" id="todayDate"></p>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Main sections">
+    <button class="tab-btn active" data-tab="routines" role="tab" aria-selected="true">🌿 Routines</button>
+    <button class="tab-btn" data-tab="chores" role="tab" aria-selected="false">🧹 Chores</button>
+    <button class="tab-btn" data-tab="recipes" role="tab" aria-selected="false">🍽️ Recipes</button>
+  </nav>
+
+  <main>
+    <!-- ROUTINES -->
+    <section id="routines" role="tabpanel">
+      <div class="card progress-wrap">
+        <div class="progress-top">
+          <span>Daily Balance</span>
+          <span id="progress-text">0/10</span>
+        </div>
+        <div class="progress-bar" aria-label="Daily progress">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>🌅 Morning</h3>
+        <div class="routine-group">
+          <label class="routine-item"><input type="checkbox" data-id="m1"><span>Hydrate 300ml water</span></label>
+          <label class="routine-item"><input type="checkbox" data-id="m2"><span>5-min stretch</span></label>
+          <label class="routine-item"><input type="checkbox" data-id="m3"><span>Protein breakfast</span></label>
+          <label class="routine-item"><input type="checkbox" data-id="m4"><span>Limit caffeine to 1 cup</span></label>
+        </div>
+        <p class="routine-note">Start slow, sip water first thing.</p>
+      </div>
+
+      <div class="card">
+        <h3>☀️ Midday</h3>
+        <div class="routine-group">
+          <label class="routine-item"><input type="checkbox" data-id="d1"><span>Walk 10 minutes</span></label>
+          <label class="routine-item"><input type="checkbox" data-id="d2"><span>Lunch with veg + protein</span></label>
+          <label class="routine-item"><input type="checkbox" data-id="d3"><span>Posture break (shoulders/stand)</span></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>🌙 Evening</h3>
+        <div class="routine-group">
+          <label class="routine-item"><input type="checkbox" data-id="e1"><span>No screens 30 min before bed</span></label>
+          <label class="routine-item"><input type="checkbox" data-id="e2"><span>Magnesium-rich snack</span></label>
+          <label class="routine-item"><input type="checkbox" data-id="e3"><span>Wind-down breathing (2 min)</span></label>
+        </div>
+        <p class="routine-note">Try: pumpkin seeds, almonds, or soy yogurt.</p>
+      </div>
+    </section>
+
+    <!-- CHORES -->
+    <section id="chores" role="tabpanel" hidden>
+      <div class="card chore-section">
+        <div class="chore-head">
+          <h3>Daily</h3><span class="badge">resets midnight</span>
+        </div>
+        <ul class="task-list" id="daily-list"></ul>
+        <div class="add-row">
+          <input type="text" id="daily-input" placeholder="Add daily task…" enterkeyhint="done">
+          <button data-add="daily">Add</button>
+        </div>
+      </div>
+
+      <div class="card chore-section">
+        <div class="chore-head">
+          <h3>Weekly</h3><span class="badge">tick as you go</span>
+        </div>
+        <ul class="task-list" id="weekly-list"></ul>
+        <div class="add-row">
+          <input type="text" id="weekly-input" placeholder="Add weekly task…">
+          <button data-add="weekly">Add</button>
+        </div>
+      </div>
+
+      <div class="card chore-section">
+        <div class="chore-head">
+          <h3>Monthly</h3><span class="badge">tick as you go</span>
+        </div>
+        <ul class="task-list" id="monthly-list"></ul>
+        <div class="add-row">
+          <input type="text" id="monthly-input" placeholder="Add monthly task…">
+          <button data-add="monthly">Add</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RECIPES -->
+    <section id="recipes" role="tabpanel" hidden>
+      <div class="filters" role="tablist" aria-label="Recipe filters">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="breakfast">Breakfast</button>
+        <button class="filter-btn" data-filter="lunch">Lunch</button>
+        <button class="filter-btn" data-filter="dinner">Dinner</button>
+        <button class="filter-btn" data-filter="snack">Snack</button>
+      </div>
+      <div class="recipe-grid" id="recipe-grid"></div>
+      <div class="note-card">💡 For hot flushes, many find it helps to limit caffeine and alcohol, especially after 3pm. Keep water to hand.</div>
+    </section>
+  </main>
+
+  <footer>
+    This app supports lifestyle habits, not medical advice. Talk to your GP or dietitian for personal guidance.
+  </footer>
+</div>
+
+<script>
+(function(){
+  const name = 'Beata';
+  localStorage.setItem('beata_name', name);
+  
+  // Greeting & date
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  document.getElementById('greeting').textContent = `${greet}, ${name}`;
+  document.getElementById('todayDate').textContent = new Date().toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'});
+  
+  // Tabs
+  const tabs = document.querySelectorAll('.tab-btn');
+  const panels = {routines:document.getElementById('routines'), chores:document.getElementById('chores'), recipes:document.getElementById('recipes')};
+  tabs.forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      tabs.forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      Object.values(panels).forEach(p=>p.hidden=true);
+      panels[btn.dataset.tab].hidden=false;
+    });
+  });
+
+  // Routines
+  const todayKey = 'beata_routines_'+ new Date().toISOString().slice(0,10);
+  const routineChecks = document.querySelectorAll('#routines input[type="checkbox"]');
+  const progressText = document.getElementById('progress-text');
+  const progressFill = document.getElementById('progress-fill');
+  let routineState = JSON.parse(localStorage.getItem(todayKey)||'{}');
+  function updateProgress(){
+    const total = routineChecks.length;
+    const done = Array.from(routineChecks).filter(c=>c.checked).length;
+    progressText.textContent = `${done}/${total}`;
+    progressFill.style.width = `${(done/total)*100}%`;
+    routineChecks.forEach(chk=>{
+      chk.closest('.routine-item').classList.toggle('checked', chk.checked);
+    });
+  }
+  routineChecks.forEach(chk=>{
+    chk.checked = !!routineState[chk.dataset.id];
+    chk.addEventListener('change',()=>{
+      routineState[chk.dataset.id]=chk.checked;
+      localStorage.setItem(todayKey, JSON.stringify(routineState));
+      updateProgress();
+    });
+  });
+  updateProgress();
+
+  // Chores
+  const CHORES_KEY = 'beata_chores_v1';
+  const RESET_KEY = 'beata_daily_reset';
+  const todayStr = new Date().toDateString();
+  const defaults = {
+    daily:[
+      {id:'d1',text:'Make bed',done:false},
+      {id:'d2',text:'Wash dishes',done:false},
+      {id:'d3',text:'10-min tidy',done:false}
+    ],
+    weekly:[
+      {id:'w1',text:'Laundry',done:false},
+      {id:'w2',text:'Vacuum floors',done:false},
+      {id:'w3',text:'Clean bathroom',done:false}
+    ],
+    monthly:[
+      {id:'m1',text:'Fridge clean',done:false},
+      {id:'m2',text:'Clean windows',done:false}
+    ]
+  };
+  let chores = JSON.parse(localStorage.getItem(CHORES_KEY)||'null') || defaults;
+  // Reset daily at midnight
+  const lastReset = localStorage.getItem(RESET_KEY);
+  if(lastReset !== todayStr){
+    chores.daily.forEach(t=>t.done=false);
+    localStorage.setItem(RESET_KEY, todayStr);
+    saveChores();
+  }
+  function saveChores(){ localStorage.setItem(CHORES_KEY, JSON.stringify(chores)); }
+  
+  function renderList(type){
+    const ul = document.getElementById(`${type}-list`);
+    ul.innerHTML='';
+    chores[type].forEach(task=>{
+      const li = document.createElement('li');
+      li.className='task'+(task.done?' done':'');
+      li.innerHTML = `<input type="checkbox" ${task.done?'checked':''} aria-label="Mark ${task.text} done"><span>${task.text}</span><button aria-label="Delete">×</button>`;
+      const chk = li.querySelector('input');
+      chk.addEventListener('change',()=>{task.done=chk.checked;li.classList.toggle('done',task.done);saveChores();});
+      li.querySelector('button').addEventListener('click',()=>{
+        chores[type]=chores[type].filter(t=>t.id!==task.id);saveChores();renderList(type);
+      });
+      ul.appendChild(li);
+    });
+    if(chores[type].length===0){
+      ul.innerHTML=`<li class="empty">No tasks yet</li>`;
+    }
+  }
+  ['daily','weekly','monthly'].forEach(renderList);
+  
+  document.querySelectorAll('[data-add]').forEach(btn=>{
+    const type = btn.dataset.add;
+    const input = document.getElementById(`${type}-input`);
+    const add = ()=>{
+      const text = input.value.trim();
+      if(!text) return;
+      chores[type].push({id:type+Date.now(),text,done:false});
+      input.value='';saveChores();renderList(type);
+    };
+    btn.addEventListener('click',add);
+    input.addEventListener('keydown',e=>{if(e.key==='Enter') add();});
+  });
+
+  // Recipes
+  const recipes = [
+    {
+      title:'Soy Yogurt Parfait with Berries & Flaxseed', category:'breakfast', emoji:'🫐',
+      helps:'Soy provides phytoestrogens plus calcium and protein. Berries give antioxidants; flaxseed adds omega-3 and fibre.',
+      ingredients:['150g unsweetened soy yogurt','80g mixed berries (fresh or frozen)','1 tbsp ground flaxseed (10g)','1 tbsp pumpkin seeds','Optional: drizzle honey'],
+      steps:['Layer yogurt and berries in a glass.','Sprinkle flaxseed and pumpkin seeds.','Enjoy.']
+    },
+    {
+      title:'Nutty Flaxseed Berry Smoothie', category:'breakfast', emoji:'🥤',
+      helps:'Protein and phytoestrogens from soy milk, omega-3 from flaxseed, magnesium from almond butter to support mood.',
+      ingredients:['200ml unsweetened soy milk','100g frozen mixed berries','1 tbsp ground flaxseed','1 tbsp almond butter','Handful spinach (50g)'],
+      steps:['Add all to blender.','Blend until smooth.','Drink straight away.']
+    },
+    {
+      title:'Wholemeal Avocado Toast with Egg', category:'breakfast', emoji:'🍳',
+      helps:'Wholegrains for steady energy, healthy fats from avocado, high-quality protein and vitamin D from egg.',
+      ingredients:['1 slice wholemeal seeded bread','½ ripe avocado, mashed','1 poached or boiled egg','Squeeze lemon, black pepper','1 tsp pumpkin seeds'],
+      steps:['Toast bread.','Top with avocado, lemon and pepper.','Add egg and seeds.']
+    },
+    {
+      title:'Greek Yoghurt Power Bowl', category:'breakfast', emoji:'🥣',
+      helps:'High protein and calcium from Greek yoghurt support muscle and bone health; oats and chia provide steady fibre.',
+      ingredients:['150g plain Greek yoghurt (2% fat)','30g rolled oats','1 tbsp chia seeds','80g strawberries, sliced','1 tsp ground flaxseed'],
+      steps:['Mix yoghurt, oats, chia, leave 5 mins','Top with berries and flaxseed','Eat']
+    },
+    {
+      title:'Overnight Soy Oats with Apple', category:'breakfast', emoji:'🌙',
+      helps:'Soy milk adds phytoestrogens; oats give beta-glucan fibre for heart health.',
+      ingredients:['40g rolled oats','150ml unsweetened soy milk','½ apple grated','1 tbsp ground flaxseed','pinch cinnamon'],
+      steps:['Combine in jar','Chill overnight','Stir and eat cold']
+    },
+    {
+      title:'Scrambled Tofu & Spinach on Toast', category:'breakfast', emoji:'🍞',
+      helps:'Calcium-set tofu provides phytoestrogens and protein; spinach adds iron and magnesium.',
+      ingredients:['100g calcium-set tofu, crumbled','handful spinach (60g)','1 tsp rapeseed oil','1 slice wholemeal bread','turmeric pinch, black pepper'],
+      steps:['Sauté tofu with turmeric 3 mins','Add spinach wilt','Serve on toast']
+    },
+    {
+      title:'Pear Walnut Porridge', category:'breakfast', emoji:'🥣',
+      helps:'Oats stabilise blood sugar; walnuts supply omega-3 ALA for brain health.',
+      ingredients:['40g porridge oats','200ml semi-skimmed milk or fortified oat milk','½ pear diced','1 tbsp chopped walnuts','sprinkle cinnamon'],
+      steps:['Simmer oats and milk 4 mins','Stir in pear','Top with walnuts']
+    },
+    {
+      title:'Green Salad with Turmeric-Lemon Salmon', category:'lunch', emoji:'🥗',
+      helps:'Omega-3 from salmon eases inflammation; leafy greens provide calcium, magnesium and folate.',
+      ingredients:['1 salmon fillet (~120g)','Mixed leaves 80g','½ cucumber sliced','10 cherry tomatoes','1 tbsp olive oil + lemon juice + ¼ tsp turmeric'],
+      steps:['Grill salmon 8-10 mins.','Whisk dressing.','Toss salad, flake salmon on top.']
+    },
+    {
+      title:'Quinoa Chickpea Tabbouleh', category:'lunch', emoji:'🥗',
+      helps:'Quinoa and chickpeas give complete protein and phytoestrogens; parsley provides vitamin K for bone.',
+      ingredients:['60g cooked quinoa','80g chickpeas drained','handful parsley chopped','½ cucumber diced','1 tbsp lemon juice + 1 tsp olive oil'],
+      steps:['Mix all','Season','Chill 10 mins']
+    },
+    {
+      title:'Smoked Mackerel Rye Open Sandwich', category:'lunch', emoji:'🐟',
+      helps:'Oily fish delivers EPA/DHA omega-3 to reduce inflammation; rye adds fibre.',
+      ingredients:['1 slice rye bread','80g smoked mackerel flakes','50g cooked beetroot sliced','1 tbsp low-fat crème fraîche','dill'],
+      steps:['Spread crème fraîche','Top with mackerel and beetroot','Sprinkle dill']
+    },
+    {
+      title:'Lentil Kale & Carrot Soup', category:'lunch', emoji:'🍲',
+      helps:'Lentils provide iron and protein for energy; kale offers calcium.',
+      ingredients:['80g red lentils','handful kale shredded','1 carrot diced','½ onion','500ml low-salt veg stock','1 tsp olive oil'],
+      steps:['Sauté onion carrot 3 mins','Add lentils stock simmer 15 mins','Add kale 3 mins']
+    },
+    {
+      title:'Edamame Quinoa Sushi Bowl', category:'lunch', emoji:'🍱',
+      helps:'Edamame and sesame give phytoestrogens; quinoa adds magnesium for sleep.',
+      ingredients:['60g cooked quinoa','80g shelled edamame','½ avocado sliced','1 carrot ribbons','1 tsp sesame seeds + 1 tsp low-salt soy'],
+      steps:['Arrange bowl','Drizzle soy','Sprinkle sesame']
+    },
+    {
+      title:'Southwestern Baked Sweet Potato', category:'dinner', emoji:'🍠',
+      helps:'Complex carbs stabilise blood sugar; black beans add phytoestrogens and protein; pumpkin seeds supply zinc and magnesium.',
+      ingredients:['1 medium sweet potato','80g black beans, drained','50g sweetcorn','1 tbsp Greek yogurt','1 tbsp pumpkin seeds','Smoked paprika, lime wedge'],
+      steps:['Bake potato 45 mins at 200°C.','Mix beans, corn, paprika.','Split potato, fill, top with yogurt, seeds, lime.']
+    },
+    {
+      title:'Tofu Vegetable Stir-fry', category:'dinner', emoji:'🥢',
+      helps:'Calcium-set tofu offers phytoestrogens and calcium; veg and flaxseed boost fibre for gut and heart health.',
+      ingredients:['150g calcium-set tofu, cubed','150g mixed stir-fry veg','1 tsp rapeseed oil','1 tbsp low-salt soy sauce','1 tbsp ground flaxseed','50g cooked brown rice'],
+      steps:['Stir-fry tofu 3 mins.','Add veg 4 mins.','Stir in soy, serve over rice, sprinkle flaxseed.']
+    },
+    {
+      title:'Salmon, Beans & Greens', category:'dinner', emoji:'🐟',
+      helps:'Double omega-3 and protein, plus soluble fibre from beans to support cholesterol management.',
+      ingredients:['1 salmon fillet (~120g)','100g green beans','80g cannellini beans, drained','1 tsp olive oil, lemon zest','Handful parsley'],
+      steps:['Roast salmon 12 mins at 200°C.','Steam beans 4 mins.','Warm cannellini with oil, lemon, parsley. Serve together.']
+    },
+    {
+      title:'Turkey & White Bean Chilli', category:'dinner', emoji:'🌶️',
+      helps:'Lean turkey preserves muscle; beans add fibre and phytoestrogens.',
+      ingredients:['120g turkey mince','80g cannellini beans','½ pepper diced','400g chopped tomatoes','1 tsp smoked paprika','50g brown rice cooked'],
+      steps:['Brown turkey 4 mins','Add veg tomatoes beans simmer 15','Serve with rice']
+    },
+    {
+      title:'Baked Cod with Roasted Mediterranean Veg', category:'dinner', emoji:'🐟',
+      helps:'White fish is light protein; colourful veg supply antioxidants for heart health.',
+      ingredients:['1 cod fillet 130g','1 courgette sliced','1 pepper sliced','8 cherry tomatoes','1 tsp olive oil lemon','60g cooked quinoa'],
+      steps:['Roast veg 15 mins 200°C','Add cod 10 mins','Serve with quinoa']
+    },
+    {
+      title:'Mushroom Lentil Shepherd\'s Pie', category:'dinner', emoji:'🥧',
+      helps:'Lentils and mushrooms give iron and B vitamins; sweet potato topping provides beta-carotene.',
+      ingredients:['80g green lentils cooked','150g mushrooms diced','1 carrot diced','200g sweet potato mash','1 tsp olive oil','thyme'],
+      steps:['Sauté veg lentils 8 mins','Top with mash','Grill 5 mins']
+    },
+    {
+      title:'Chicken Broccoli Cashew Stir-fry', category:'dinner', emoji:'🍗',
+      helps:'Chicken supplies lean protein; broccoli gives calcium; cashews add magnesium for muscle relaxation.',
+      ingredients:['120g chicken breast strips','150g broccoli florets','1 tbsp cashews','1 tsp rapeseed oil','1 tbsp low-salt soy + ginger','50g wholewheat noodles'],
+      steps:['Stir-fry chicken 4 mins','Add broccoli 3 mins','Add soy noodles cashews']
+    },
+    {
+      title:'Chia Seed Pudding', category:'snack', emoji:'🥄',
+      helps:'Chia and soy give calcium, protein and omega-3; great evening snack for blood-sugar stability.',
+      ingredients:['3 tbsp chia seeds (30g)','150ml unsweetened soy milk','½ tsp vanilla extract','80g raspberries'],
+      steps:['Mix chia, milk, vanilla.','Chill 2+ hours or overnight.','Top with raspberries.']
+    }
+  ];
+  const grid = document.getElementById('recipe-grid');
+  const filterBtns = document.querySelectorAll('.filter-btn');
+  function renderRecipes(filter='all'){
+    grid.innerHTML='';
+    recipes.filter(r=>filter==='all'||r.category===filter).forEach(r=>{
+      const card = document.createElement('article');
+      card.className='recipe';
+      card.innerHTML=`
+        <div class="recipe-top">
+          <div class="recipe-emoji">${r.emoji}</div>
+          <div>
+            <h4>${r.title}</h4>
+            <span class="pill">${r.category}</span>
+          </div>
+        </div>
+        <details open>
+          <summary>Ingredients (UK) <span>▾</span></summary>
+          <ul>${r.ingredients.map(i=>`<li>${i}</li>`).join('')}</ul>
+        </details>
+        <div class="helps"><strong>Why it helps:</strong> ${r.helps}</div>
+        <details>
+          <summary>Quick steps <span>▾</span></summary>
+          <ol>${r.steps.map(s=>`<li>${s}</li>`).join('')}</ol>
+        </details>
+      `;
+      grid.appendChild(card);
+    });
+  }
+  filterBtns.forEach(b=>b.addEventListener('click',()=>{
+    filterBtns.forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    renderRecipes(b.dataset.filter);
+  }));
+  renderRecipes();
+
+})();
+</script>
+<script>(function(){document.addEventListener("click",function(e){var a=e.target.closest("[data-product-id]");if(!a)return;e.preventDefault();var pid=a.getAttribute("data-product-id");if(pid)parent.postMessage({type:"ecto-artifact-link-click",productId:pid},"*")})})();</script>
+<script>(function(){document.addEventListener("click",function(e){var a=e.target.closest("[data-product-id]");if(!a)return;e.preventDefault();var pid=a.getAttribute("data-product-id");if(pid)parent.postMessage({type:"ecto-artifact-link-click",productId:pid},"*")})})();</script>
+</body>
+</html>
