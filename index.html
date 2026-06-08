@@ -372,6 +372,21 @@
   }
   
   .empty{padding:18px;text-align:center;color:var(--ink-2);font-size:14px}
+
+  .add-recipe-card{padding:0;overflow:hidden}
+  .add-recipe-toggle{width:100%;text-align:left;padding:14px 16px;background:transparent;border:none;font-weight:700;font-size:15.5px;color:var(--sage-700);cursor:pointer}
+  .add-recipe-form{padding:12px 16px 16px;display:grid;gap:10px;border-top:1px dashed var(--border)}
+  .add-recipe-form .field{display:flex;flex-direction:column;gap:6px}
+  .add-recipe-form label{font-size:13px;font-weight:650;color:var(--ink-2)}
+  .add-recipe-form input,.add-recipe-form select,.add-recipe-form textarea{border:1px solid var(--border);border-radius:12px;padding:10px 12px;font-size:15px;background:white;font-family:inherit;width:100%}
+  .add-recipe-form textarea{min-height:72px;resize:vertical}
+  .add-recipe-form .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:480px){.add-recipe-form .row{grid-template-columns:1fr}}
+  .add-recipe-form button[type="submit"]{height:48px;border:none;background:var(--sage);color:white;font-weight:700;border-radius:12px;cursor:pointer}
+  .recipe{position:relative}
+  .recipe-delete{position:absolute;top:10px;right:10px;width:30px;height:30px;border:none;background:var(--cream);color:#8a6f5a;border-radius:8px;font-size:20px;line-height:1;cursor:pointer;display:grid;place-items:center;border:1px solid var(--border);z-index:2}
+  .recipe-delete:hover{background:#f0e9dd}
+  .pill.my{background:#f0ead6;color:#7a5e1e;margin-left:6px}
 </style>
 </head>
 <body>
@@ -477,6 +492,40 @@
         <button class="filter-btn" data-filter="dinner">Dinner</button>
         <button class="filter-btn" data-filter="snack">Snack</button>
       </div>
+
+      <div class="card add-recipe-card">
+        <button class="add-recipe-toggle" id="add-recipe-toggle" aria-expanded="false">Add your own recipe +</button>
+        <form id="add-recipe-form" class="add-recipe-form" hidden>
+          <div class="field">
+            <label for="rcp-name">Recipe name</label>
+            <input id="rcp-name" type="text" placeholder="e.g., Mum's lentil stew" required>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="rcp-cat">Category</label>
+              <select id="rcp-cat">
+                <option>Breakfast</option>
+                <option>Lunch</option>
+                <option>Dinner</option>
+                <option>Snack</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="rcp-helps">Why it helps</label>
+              <input id="rcp-helps" type="text" placeholder="protein for muscle, calcium for bones...">
+            </div>
+          <div class="field">
+            <label for="rcp-ing">Ingredients</label>
+            <textarea id="rcp-ing" placeholder="one per line or comma separated"></textarea>
+          </div>
+          <div class="field">
+            <label for="rcp-steps">Steps</label>
+            <textarea id="rcp-steps" placeholder="quick steps"></textarea>
+          </div>
+          <button type="submit">Add recipe</button>
+        </form>
+      </div>
+
       <div class="recipe-grid" id="recipe-grid"></div>
       <div class="note-card">💡 For hot flushes, many find it helps to limit caffeine and alcohol, especially after 3pm. Keep water to hand.</div>
     </section>
@@ -723,30 +772,54 @@
   ];
   const grid = document.getElementById('recipe-grid');
   const filterBtns = document.querySelectorAll('.filter-btn');
+  const CUSTOM_KEY = 'customRecipes';
+  let customRecipes = JSON.parse(localStorage.getItem(CUSTOM_KEY)||'[]');
+  let currentFilter = 'all';
+
   function renderRecipes(filter='all'){
+    currentFilter = filter;
     grid.innerHTML='';
-    recipes.filter(r=>filter==='all'||r.category===filter).forEach(r=>{
+    const all = [...recipes, ...customRecipes];
+    const filtered = all.filter(r=>filter==='all'||r.category===filter);
+    if(filtered.length===0){
+      grid.innerHTML = `<div class="empty">No recipes in this category yet</div>`;
+      return;
+    }
+    filtered.forEach(r=>{
       const card = document.createElement('article');
       card.className='recipe';
       card.innerHTML=`
+        ${r.isCustom ? `<button class="recipe-delete" data-id="${r.id}" aria-label="Delete recipe">×</button>` : ''}
         <div class="recipe-top">
-          <div class="recipe-emoji">${r.emoji}</div>
+          <div class="recipe-emoji">${r.emoji || '🍽️'}</div>
           <div>
             <h4>${r.title}</h4>
-            <span class="pill">${r.category}</span>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+              <span class="pill">${r.category}</span>
+              ${r.isCustom ? `<span class="pill my">My recipe</span>` : ''}
+            </div>
           </div>
         </div>
         <details open>
           <summary>Ingredients (UK) <span>▾</span></summary>
-          <ul>${r.ingredients.map(i=>`<li>${i}</li>`).join('')}</ul>
+          <ul>${(r.ingredients||[]).map(i=>`<li>${i}</li>`).join('')}</ul>
         </details>
-        <div class="helps"><strong>Why it helps:</strong> ${r.helps}</div>
+        ${r.helps ? `<div class="helps"><strong>Why it helps:</strong> ${r.helps}</div>` : ''}
         <details>
           <summary>Quick steps <span>▾</span></summary>
-          <ol>${r.steps.map(s=>`<li>${s}</li>`).join('')}</ol>
+          <ol>${(r.steps||[]).map(s=>`<li>${s}</li>`).join('')}</ol>
         </details>
       `;
       grid.appendChild(card);
+      if(r.isCustom){
+        card.querySelector('.recipe-delete').addEventListener('click',()=>{
+          if(confirm('Delete this recipe?')){
+            customRecipes = customRecipes.filter(c=>c.id!==r.id);
+            localStorage.setItem(CUSTOM_KEY, JSON.stringify(customRecipes));
+            renderRecipes(currentFilter);
+          }
+        });
+      }
     });
   }
   filterBtns.forEach(b=>b.addEventListener('click',()=>{
@@ -755,6 +828,50 @@
     renderRecipes(b.dataset.filter);
   }));
   renderRecipes();
+
+  // Add custom recipe
+  const toggleBtn = document.getElementById('add-recipe-toggle');
+  const addForm = document.getElementById('add-recipe-form');
+  if(toggleBtn && addForm){
+    toggleBtn.addEventListener('click', ()=>{
+      const expanded = toggleBtn.getAttribute('aria-expanded')==='true';
+      toggleBtn.setAttribute('aria-expanded', String(!expanded));
+      addForm.hidden = expanded;
+      toggleBtn.textContent = expanded ? 'Add your own recipe +' : 'Add your own recipe –';
+      if(!expanded) setTimeout(()=>document.getElementById('rcp-name').focus(), 50);
+    });
+    addForm.addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const name = document.getElementById('rcp-name').value.trim();
+      if(!name){ document.getElementById('rcp-name').focus(); return; }
+      const category = document.getElementById('rcp-cat').value.toLowerCase();
+      const helps = document.getElementById('rcp-helps').value.trim();
+      const ingRaw = document.getElementById('rcp-ing').value;
+      const stepsRaw = document.getElementById('rcp-steps').value;
+      const ingredients = ingRaw.split(/\n|,/).map(s=>s.trim()).filter(Boolean);
+      const steps = stepsRaw.split(/\n|\./).map(s=>s.trim()).filter(Boolean);
+      const newRecipe = {
+        id: 'c'+Date.now(),
+        title: name,
+        category,
+        emoji: '🍽️',
+        helps,
+        ingredients,
+        steps,
+        isCustom: true
+      };
+      customRecipes.push(newRecipe);
+      localStorage.setItem(CUSTOM_KEY, JSON.stringify(customRecipes));
+      addForm.reset();
+      addForm.hidden = true;
+      toggleBtn.setAttribute('aria-expanded','false');
+      toggleBtn.textContent = 'Add your own recipe +';
+      filterBtns.forEach(x=>x.classList.remove('active'));
+      const targetBtn = document.querySelector(`.filter-btn[data-filter="${category}"]`);
+      if(targetBtn) targetBtn.classList.add('active');
+      renderRecipes(category);
+    });
+  }
 
 })();
 </script>
